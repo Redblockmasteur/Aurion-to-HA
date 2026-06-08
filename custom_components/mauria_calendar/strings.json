@@ -1,0 +1,23 @@
+{
+  "title": "Mauria Calendar",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mauria Calendar Setup",
+        "description": "Enter your Mauria credentials to connect to the API.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password",
+      "cannot_connect": "Cannot connect to Mauria API",
+      "unknown": "Unknown error occurred"
+    }
+  },
+  "options": {
+    "scan_interval": "Update interval (minutes)"
+  }
+}
