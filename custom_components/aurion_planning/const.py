@@ -28,3 +28,6 @@ ATTR_TOTAL_ABSENCES = "total_absences"
 ERROR_AUTH_FAILED = "auth_failed"
 ERROR_CONNECTION = "connection_error"
 ERROR_PARSING = "parsing_error"
+
+# Calendar
+CALENDAR_NAME = "Aurion Calendar"

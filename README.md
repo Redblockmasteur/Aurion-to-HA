@@ -6,9 +6,10 @@ This integration allows you to fetch and display your **Aurion planning and abse
 - **UI Configuration**: Add the integration via the Home Assistant UI.
 - **Mauria API**: Uses the Mauria API wrapper to fetch Aurion data.
 - **Automatic Updates**: Regularly polls the API for new data.
-- **Multiple Sensors**:
-  - **Planning**: Fetch and display your Aurion planning events.
-  - **Absences**: Display the total number of absences and detailed list.
+- **Multiple Entities**:
+  - **Calendar**: Native calendar entity for planning events.
+  - **Planning Sensor**: Sensor with planning events as attributes.
+  - **Absences Sensor**: Sensor with total absences count and detailed list.
 - **Customizable Range**: Configure how many days of planning to fetch (default: 60 days).
 
 ---
@@ -40,11 +41,19 @@ This integration allows you to fetch and display your **Aurion planning and abse
 
 ---
 
-## Sensors
+## Entities
 
-The integration creates **two sensors** for each Aurion account:
+The integration creates **three entities** for each Aurion account:
 
-### 1. Planning Sensor
+### 1. Calendar Entity
+- **Entity ID**: `calendar.aurion_calendar_<your_email>`
+- **Features**:
+  - Native calendar integration in Home Assistant.
+  - Supports the **Calendar card** in Lovelace.
+  - Events are automatically fetched and updated.
+  - Compatible with calendar triggers in automations.
+
+### 2. Planning Sensor
 - **Entity ID**: `sensor.aurion_planning_<your_email>`
 - **State**: Timestamp of the last update.
 - **Attributes**:
@@ -53,7 +62,7 @@ The integration creates **two sensors** for each Aurion account:
   | `events` | List of planning events (JSON array) | `[{"id": "1", "title": "Cours de Maths", "start": "2024-06-10T08:00:00", "end": "2024-06-10T10:00:00", "allDay": false, "editable": false, "className": "cours"}]` |
   | `last_updated` | Timestamp of the last update | `2024-06-10T12:00:00.000000+00:00` |
 
-### 2. Absences Sensor
+### 3. Absences Sensor
 - **Entity ID**: `sensor.aurion_absences_<your_email>`
 - **State**: **Total number of absences** (e.g., `12`).
 - **Attributes**:
@@ -86,17 +95,18 @@ automation:
           message: "Nouvelle absence détectée ! Total: {{ trigger.to_state.state }} absences."
 ```
 
-#### 2. Notify on Planning Update
+#### 2. Notify When Class Starts
 ```yaml
 automation:
-  - alias: "Notify on planning update"
+  - alias: "Notify when class starts"
     trigger:
-      - platform: state
-        entity_id: sensor.aurion_planning_your_email
+      - platform: calendar
+        entity_id: calendar.aurion_calendar_your_email
+        event: start
     action:
       - service: notify.notify
         data:
-          message: "Votre planning Aurion a été mis à jour !"
+          message: "Un cours commence dans 10 minutes: {{ trigger.event.summary }} !"
 ```
 
 ### Templates
@@ -137,7 +147,14 @@ sensor:
 
 ### Dashboards (Lovelace)
 
-#### 1. Absences Card
+#### 1. Calendar Card
+```yaml
+type: calendar
+entity: calendar.aurion_calendar_your_email
+name: Mon Planning Aurion
+```
+
+#### 2. Absences Card
 ```yaml
 type: entities
 entities:
@@ -146,13 +163,19 @@ entities:
     secondary_info: last-updated
 ```
 
-#### 2. Planning Card
+#### 3. Combined View
 ```yaml
-type: entities
-entities:
-  - entity: sensor.aurion_planning_your_email
+type: vertical-stack
+cards:
+  - type: calendar
+    entity: calendar.aurion_calendar_your_email
     name: Planning
-    secondary_info: last-updated
+  - type: entities
+    entities:
+      - entity: sensor.aurion_absences_your_email
+        name: Absences
+      - entity: sensor.aurion_planning_your_email
+        name: Dernière mise à jour
 ```
 
 ---
@@ -174,15 +197,19 @@ For more details, see the [Mauria API documentation](https://mauria-api.fly.dev/
 ### Authentication Failed
 - Verify your **email and password** are correct.
 - Ensure your Aurion account is **active** and accessible.
+- Check if the Mauria API is **online** (https://mauria-api.fly.dev).
 
-### Connection Error
-- Check your **internet connection**.
-- Verify the Mauria API is **online** (https://mauria-api.fly.dev).
+### Connection Error (Status 500)
+- The Mauria API might be temporarily down. Try again later.
+- Check the **logs** in Home Assistant for more details:
+  - Go to **Settings > System > Logs**.
+  - Filter for `aurion_planning`.
+- Enable debug logging (see below).
 
 ### No Data Showing
 - Ensure your Aurion account has **planning events** or **absences**.
 - Check the **planning range** in the integration options (default: 60 days).
-- Enable debug logging (see below).
+- Verify that the **email and password** are correct.
 
 ### Enable Debug Logging
 Add the following to your `configuration.yaml`:
