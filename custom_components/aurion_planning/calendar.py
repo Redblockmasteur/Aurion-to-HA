@@ -42,12 +42,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Aurion Calendar."""
+    # Get the shared session from hass.data
+    session = hass.data[DOMAIN][entry.entry_id]["session"]
     email = entry.data[CONF_EMAIL]
     password = entry.data[CONF_PASSWORD]
     planning_range_days = entry.options.get("planning_range_days", DEFAULT_PLANNING_RANGE_DAYS)
 
     # Initialize the coordinator
-    coordinator = AurionCalendarCoordinator(hass, email, password, planning_range_days)
+    coordinator = AurionCalendarCoordinator(hass, session, email, password, planning_range_days)
     await coordinator.async_config_entry_first_refresh()
 
     # Add the calendar entity
@@ -58,7 +60,7 @@ class AurionCalendarCoordinator(DataUpdateCoordinator):
     """Coordinator to fetch calendar data from Mauria API."""
 
     def __init__(
-        self, hass: HomeAssistant, email: str, password: str, planning_range_days: int
+        self, hass: HomeAssistant, session: ClientSession, email: str, password: str, planning_range_days: int
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -67,31 +69,37 @@ class AurionCalendarCoordinator(DataUpdateCoordinator):
             name=f"{DOMAIN}_calendar",
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
+        self._session = session
         self._email = email
         self._password = password
         self._planning_range_days = planning_range_days
-        self._session: Optional[ClientSession] = None
         self._events: List[Dict[str, Any]] = []
         self._last_updated: Optional[datetime] = None
+        self._is_logged_in = False
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Mauria API."""
-        self._session = ClientSession()
         try:
             # Login first
-            login_url = f"{MAURIA_API_URL}{LOGIN_ENDPOINT}"
-            login_data = {
-                "email": self._email,
-                "password": self._password,
-            }
+            if not self._is_logged_in:
+                login_url = f"{MAURIA_API_URL}{LOGIN_ENDPOINT}"
+                login_data = {
+                    "email": self._email,
+                    "password": self._password,
+                }
 
-            async with self._session.post(login_url, json=login_data) as response:
-                if response.status != 200:
-                    raise UpdateFailed(f"Login failed with status {response.status}")
+                _LOGGER.debug("Calendar: Attempting login to Mauria API")
+                async with self._session.post(login_url, json=login_data) as response:
+                    _LOGGER.debug("Calendar: Login response status: %s", response.status)
+                    if response.status != 200:
+                        raise UpdateFailed(f"Login failed with status {response.status}")
 
-                response_data = await response.json()
-                if not response_data.get("success", False):
-                    raise UpdateFailed(f"Login failed: {response_data.get('error', 'Unknown error')}")
+                    response_data = await response.json()
+                    _LOGGER.debug("Calendar: Login response data: %s", response_data)
+                    if not response_data.get("success", False):
+                        raise UpdateFailed(f"Login failed: {response_data.get('error', 'Unknown error')}")
+
+                    self._is_logged_in = True
 
             # Calculate date range
             now_dt = now()
@@ -107,11 +115,15 @@ class AurionCalendarCoordinator(DataUpdateCoordinator):
                 "endTimestamp": end_timestamp,
             }
 
+            _LOGGER.debug("Calendar: Fetching planning from %s to %s", start_timestamp, end_timestamp)
             async with self._session.post(planning_url, json=request_data) as response:
+                _LOGGER.debug("Calendar: Planning response status: %s", response.status)
                 if response.status != 200:
-                    raise UpdateFailed(f"Planning request failed with status {response.status}")
+                    response_text = await response.text()
+                    raise UpdateFailed(f"Planning request failed with status {response.status}, response: {response_text}")
 
                 response_data = await response.json()
+                _LOGGER.debug("Calendar: Planning response data: %s", response_data)
                 if not response_data.get("success", False):
                     raise UpdateFailed(f"Planning request failed: {response_data.get('error', 'Unknown error')}")
 
@@ -124,21 +136,15 @@ class AurionCalendarCoordinator(DataUpdateCoordinator):
                 }
 
         except ClientError as e:
-            _LOGGER.error("Connection error: %s", e)
+            _LOGGER.error("Calendar: Connection error: %s", e)
             raise UpdateFailed(f"Connection error: {e}")
         except Exception as e:
-            _LOGGER.error("Unexpected error: %s", e)
+            _LOGGER.error("Calendar: Unexpected error: %s", e)
             raise UpdateFailed(f"Unexpected error: {e}")
-        finally:
-            if self._session:
-                await self._session.close()
-                self._session = None
 
     async def async_shutdown(self) -> None:
         """Close the session on shutdown."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        pass  # Session is managed by the integration
 
     @property
     def events(self) -> List[Dict[str, Any]]:
@@ -184,8 +190,13 @@ class AurionCalendarEntity(CoordinatorEntity, CalendarEntity):
                     continue
 
                 # Parse ISO format dates (assuming they are in UTC or with timezone)
-                start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                end = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                try:
+                    start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                except ValueError:
+                    # Try parsing as timestamp in milliseconds
+                    start = datetime.fromtimestamp(int(start_str) / 1000)
+                    end = datetime.fromtimestamp(int(end_str) / 1000)
                 
                 # Ensure start and end are timezone-aware
                 if start.tzinfo is None:
@@ -208,7 +219,7 @@ class AurionCalendarEntity(CoordinatorEntity, CalendarEntity):
                 )
                 events.append(event)
 
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, KeyError) as e:
                 _LOGGER.error("Error parsing event %s: %s", event_data, e)
                 continue
 
