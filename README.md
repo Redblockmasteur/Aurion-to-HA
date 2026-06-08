@@ -1,11 +1,14 @@
-# Aurion Planning Integration for Home Assistant
+# Aurion Integration for Home Assistant
 
-This integration allows you to fetch and display your **Aurion planning** in Home Assistant using the [Mauria API](https://mauria-api.fly.dev).
+This integration allows you to fetch and display your **Aurion planning and absences** in Home Assistant using the [Mauria API](https://mauria-api.fly.dev).
 
 ## Features
 - **UI Configuration**: Add the integration via the Home Assistant UI.
-- **Mauria API**: Uses the Mauria API wrapper to fetch Aurion planning data.
-- **Automatic Updates**: Regularly polls the API for new events.
+- **Mauria API**: Uses the Mauria API wrapper to fetch Aurion data.
+- **Automatic Updates**: Regularly polls the API for new data.
+- **Multiple Sensors**:
+  - **Planning**: Fetch and display your Aurion planning events.
+  - **Absences**: Display the total number of absences and detailed list.
 - **Customizable Range**: Configure how many days of planning to fetch (default: 60 days).
 
 ---
@@ -37,14 +40,28 @@ This integration allows you to fetch and display your **Aurion planning** in Hom
 
 ---
 
-## Sensor Attributes
+## Sensors
 
-The integration creates a sensor with the following attributes:
+The integration creates **two sensors** for each Aurion account:
 
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `events` | List of planning events (JSON array) | `[{"id": "1", "title": "Cours de Maths", "start": "2024-06-10T08:00:00", "end": "2024-06-10T10:00:00", "allDay": false, "editable": false, "className": "cours"}]` |
-| `last_updated` | Timestamp of the last update | `2024-06-10T12:00:00.000000+00:00` |
+### 1. Planning Sensor
+- **Entity ID**: `sensor.aurion_planning_<your_email>`
+- **State**: Timestamp of the last update.
+- **Attributes**:
+  | Attribute | Description | Example |
+  |-----------|-------------|---------|
+  | `events` | List of planning events (JSON array) | `[{"id": "1", "title": "Cours de Maths", "start": "2024-06-10T08:00:00", "end": "2024-06-10T10:00:00", "allDay": false, "editable": false, "className": "cours"}]` |
+  | `last_updated` | Timestamp of the last update | `2024-06-10T12:00:00.000000+00:00` |
+
+### 2. Absences Sensor
+- **Entity ID**: `sensor.aurion_absences_<your_email>`
+- **State**: **Total number of absences** (e.g., `12`).
+- **Attributes**:
+  | Attribute | Description | Example |
+  |-----------|-------------|---------|
+  | `absences` | List of absences (JSON array) | `[{"date": "12/03/26", "type": "Absence non excusée", "duration": "2:00", "time": "08:00 - 10:00", "class": "Communication et Supervision Industrielle", "teacher": "Moez BELHAOUANE"}]` |
+  | `last_updated` | Timestamp of the last update | `2024-06-10T12:00:00.000000+00:00` |
+  | `total_absences` | Total number of absences | `12` |
 
 ---
 
@@ -52,34 +69,49 @@ The integration creates a sensor with the following attributes:
 
 ### Automations
 
-You can create automations based on planning events. For example, notify when a new event is added:
-
+#### 1. Notify on New Absence
 ```yaml
 automation:
-  - alias: "Notify on new Aurion event"
+  - alias: "Notify on new absence"
+    trigger:
+      - platform: state
+        entity_id: sensor.aurion_absences_your_email
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.to_state.state | int > trigger.from_state.state | int }}
+    action:
+      - service: notify.notify
+        data:
+          message: "Nouvelle absence détectée ! Total: {{ trigger.to_state.state }} absences."
+```
+
+#### 2. Notify on Planning Update
+```yaml
+automation:
+  - alias: "Notify on planning update"
     trigger:
       - platform: state
         entity_id: sensor.aurion_planning_your_email
     action:
       - service: notify.notify
         data:
-          message: "New event in Aurion planning!"
+          message: "Votre planning Aurion a été mis à jour !"
 ```
 
 ### Templates
 
-Extract event details using templates:
-
+#### 1. Next Class
 ```yaml
 sensor:
   - platform: template
     sensors:
-      next_aurion_event:
+      next_class:
         value_template: >
           {% if state_attr('sensor.aurion_planning_your_email', 'events') | length > 0 %}
             {{ state_attr('sensor.aurion_planning_your_email', 'events')[0].title }}
           {% else %}
-            No events
+            Aucun cours
           {% endif %}
         attribute_templates:
           start_time: >
@@ -88,21 +120,39 @@ sensor:
             {% endif %}
 ```
 
-### Calendar Integration (Advanced)
-
-You can create a calendar entity using the [Home Assistant Calendar integration](https://www.home-assistant.io/integrations/calendar/) with a template:
-
+#### 2. Last Absence Details
 ```yaml
-calendar:
+sensor:
   - platform: template
-    name: "Aurion Planning"
-    events:
-      - name: "{{ event.title }}"
-        start: "{{ event.start }}"
-        end: "{{ event.end }}"
-        data:
-          events: >
-            {{ state_attr('sensor.aurion_planning_your_email', 'events') }}
+    sensors:
+      last_absence:
+        value_template: >
+          {% if state_attr('sensor.aurion_absences_your_email', 'absences') | length > 0 %}
+            {{ state_attr('sensor.aurion_absences_your_email', 'absences')[0].date }} - 
+            {{ state_attr('sensor.aurion_absences_your_email', 'absences')[0].class }}
+          {% else %}
+            Aucune absence
+          {% endif %}
+```
+
+### Dashboards (Lovelace)
+
+#### 1. Absences Card
+```yaml
+type: entities
+entities:
+  - entity: sensor.aurion_absences_your_email
+    name: Total Absences
+    secondary_info: last-updated
+```
+
+#### 2. Planning Card
+```yaml
+type: entities
+entities:
+  - entity: sensor.aurion_planning_your_email
+    name: Planning
+    secondary_info: last-updated
 ```
 
 ---
@@ -113,6 +163,7 @@ This integration uses the [Mauria API](https://mauria-api.fly.dev) with the foll
 
 - **`POST /aurion/login`**: Authenticate with Aurion credentials.
 - **`POST /aurion/planning`**: Fetch planning events for a given date range.
+- **`POST /aurion/absences`**: Fetch absences data.
 
 For more details, see the [Mauria API documentation](https://mauria-api.fly.dev/json).
 
@@ -128,9 +179,19 @@ For more details, see the [Mauria API documentation](https://mauria-api.fly.dev/
 - Check your **internet connection**.
 - Verify the Mauria API is **online** (https://mauria-api.fly.dev).
 
-### No Events Showing
-- Ensure your Aurion account has **planning events**.
+### No Data Showing
+- Ensure your Aurion account has **planning events** or **absences**.
 - Check the **planning range** in the integration options (default: 60 days).
+- Enable debug logging (see below).
+
+### Enable Debug Logging
+Add the following to your `configuration.yaml`:
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.aurion_planning: debug
+```
 
 ---
 
@@ -141,15 +202,8 @@ For more details, see the [Mauria API documentation](https://mauria-api.fly.dev/
 2. Restart Home Assistant.
 3. Add the integration via the UI.
 
-### Logging
-Enable debug logging for this integration:
-
-```yaml
-logger:
-  default: info
-  logs:
-    custom_components.aurion_planning: debug
-```
+### Contributing
+Feel free to open issues or pull requests on the [GitHub repository](https://github.com/Redblockmasteur/Aurion-to-HA).
 
 ---
 

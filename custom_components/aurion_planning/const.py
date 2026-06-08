@@ -8,6 +8,7 @@ DOMAIN = "aurion_planning"
 MAURIA_API_URL = "https://mauria-api.fly.dev"
 LOGIN_ENDPOINT = "/aurion/login"
 PLANNING_ENDPOINT = "/aurion/planning"
+ABSENCES_ENDPOINT = "/aurion/absences"
 
 # Form fields
 CONF_EMAIL = "email"
@@ -19,7 +20,9 @@ DEFAULT_PLANNING_RANGE_DAYS = 60  # Fetch planning for the next 60 days
 
 # Attributes
 ATTR_EVENTS = "events"
+ATTR_ABSENCES = "absences"
 ATTR_LAST_UPDATED = "last_updated"
+ATTR_TOTAL_ABSENCES = "total_absences"
 
 # Error messages
 ERROR_AUTH_FAILED = "auth_failed"

@@ -3,7 +3,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Aurion Planning Setup",
+        "title": "Aurion Setup",
         "description": "Enter your Aurion credentials to connect via Mauria API.",
         "data": {
           "email": "Email",
