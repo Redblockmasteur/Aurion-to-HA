@@ -1,4 +1,4 @@
-"""Sensor platform for Mauria Calendar integration."""
+"""Sensor platform for Aurion Planning integration."""
 
 from datetime import datetime, timedelta
 import logging
@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 from homeassistant.components.sensor import (
     SensorEntity,
     SensorDeviceClass,
-    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ATTRIBUTION
@@ -20,15 +19,17 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from aiohttp import ClientSession, ClientError
+
 from .const import (
     DOMAIN,
-    DEFAULT_API_URL,
-    API_CALENDAR_ENDPOINT,
-    CONF_USERNAME,
+    CONF_EMAIL,
     CONF_PASSWORD,
+    MAURIA_API_URL,
+    PLANNING_ENDPOINT,
     ATTR_EVENTS,
     ATTR_LAST_UPDATED,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_PLANNING_RANGE_DAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,23 +40,24 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Mauria Calendar sensor."""
-    username = entry.data[CONF_USERNAME]
+    """Set up the Aurion Planning sensor."""
+    email = entry.data[CONF_EMAIL]
     password = entry.data[CONF_PASSWORD]
+    planning_range_days = entry.options.get("planning_range_days", DEFAULT_PLANNING_RANGE_DAYS)
 
     # Initialize the coordinator
-    coordinator = MauriaCalendarCoordinator(hass, username, password)
+    coordinator = AurionPlanningCoordinator(hass, email, password, planning_range_days)
     await coordinator.async_config_entry_first_refresh()
 
     # Add the sensor
-    async_add_entities([MauriaCalendarSensor(coordinator, entry)])
+    async_add_entities([AurionPlanningSensor(coordinator, entry)])
 
 
-class MauriaCalendarCoordinator(DataUpdateCoordinator):
+class AurionPlanningCoordinator(DataUpdateCoordinator):
     """Coordinator to fetch data from Mauria API."""
 
     def __init__(
-        self, hass: HomeAssistant, username: str, password: str
+        self, hass: HomeAssistant, email: str, password: str, planning_range_days: int
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -64,50 +66,50 @@ class MauriaCalendarCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
-        self._username = username
+        self._email = email
         self._password = password
-        self._session = ClientSession()
+        self._planning_range_days = planning_range_days
+        self._session: Optional[ClientSession] = None
         self._events: List[Dict[str, Any]] = []
         self._last_updated: Optional[datetime] = None
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Mauria API."""
+        self._session = ClientSession()
         try:
-            # Step 1: Authenticate
-            auth_url = f"{DEFAULT_API_URL}/auth/login"
-            auth_data = {
-                "username": self._username,
+            # Calculate date range
+            now = datetime.now()
+            start_timestamp = int(now.timestamp() * 1000)  # Current time in milliseconds
+            end_timestamp = int((now + timedelta(days=self._planning_range_days)).timestamp() * 1000)
+
+            # Prepare the request
+            planning_url = f"{MAURIA_API_URL}{PLANNING_ENDPOINT}"
+            request_data = {
+                "email": self._email,
                 "password": self._password,
+                "startTimestamp": start_timestamp,
+                "endTimestamp": end_timestamp,
             }
 
-            async with self._session.post(auth_url, json=auth_data) as response:
+            _LOGGER.debug("Fetching planning from Mauria API: %s", planning_url)
+            async with self._session.post(planning_url, json=request_data) as response:
                 if response.status != 200:
-                    raise UpdateFailed("Authentication failed")
-                
-                auth_response = await response.json()
-                token = auth_response.get("token")
-                if not token:
-                    raise UpdateFailed("No token received")
+                    raise UpdateFailed(f"API request failed with status {response.status}")
 
-            # Step 2: Fetch calendar data
-            calendar_url = f"{DEFAULT_API_URL}{API_CALENDAR_ENDPOINT}"
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            }
-
-            async with self._session.get(calendar_url, headers=headers) as response:
-                if response.status != 200:
-                    raise UpdateFailed(f"Failed to fetch calendar: {response.status}")
+                response_data = await response.json()
                 
-                calendar_data = await response.json()
-                self._events = calendar_data.get("events", [])
+                if not response_data.get("success", False):
+                    error = response_data.get("error", "Unknown error")
+                    raise UpdateFailed(f"API error: {error}")
+
+                # Extract events
+                self._events = response_data.get("data", [])
                 self._last_updated = datetime.now()
 
-            return {
-                ATTR_EVENTS: self._events,
-                ATTR_LAST_UPDATED: self._last_updated,
-            }
+                return {
+                    ATTR_EVENTS: self._events,
+                    ATTR_LAST_UPDATED: self._last_updated,
+                }
 
         except ClientError as e:
             _LOGGER.error("Connection error: %s", e)
@@ -115,22 +117,28 @@ class MauriaCalendarCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Unexpected error: %s", e)
             raise UpdateFailed(f"Unexpected error: {e}")
+        finally:
+            if self._session:
+                await self._session.close()
+                self._session = None
 
     async def async_shutdown(self) -> None:
         """Close the session on shutdown."""
-        await self._session.close()
+        if self._session:
+            await self._session.close()
+            self._session = None
 
 
-class MauriaCalendarSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a Mauria Calendar sensor."""
+class AurionPlanningSensor(CoordinatorEntity, SensorEntity):
+    """Representation of an Aurion Planning sensor."""
 
     def __init__(
-        self, coordinator: MauriaCalendarCoordinator, entry: ConfigEntry
+        self, coordinator: AurionPlanningCoordinator, entry: ConfigEntry
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_name = f"Mauria Calendar - {entry.data[CONF_USERNAME]}"
+        self._attr_name = f"Aurion Planning - {entry.data[CONF_EMAIL]}"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         self._attr_native_value = None

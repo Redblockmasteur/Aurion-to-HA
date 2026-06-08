@@ -1,0 +1,24 @@
+{
+  "title": "Aurion Planning (Mauria API)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aurion Planning Setup",
+        "description": "Enter your Aurion credentials to connect via Mauria API.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Cannot connect to Mauria API",
+      "unknown": "Unknown error occurred"
+    }
+  },
+  "options": {
+    "scan_interval": "Update interval (minutes)",
+    "planning_range_days": "Planning range (days)"
+  }
+}
